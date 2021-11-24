@@ -1,0 +1,125 @@
+esphome:
+  name: esp-motor
+  platform: ESP8266
+  board: esp01_1m
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+ota:
+  password: "f2099e28f39c3735783531e17f936689"
+
+wifi:
+  ssid: "noc.cisco.com"
+  password: "aabbccddee"
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esp-Motor Fallback Hotspot"
+    password: "2ZiN7usJKSFW"
+
+captive_portal:
+
+
+globals:
+  - id: pulses_forward
+    type: double
+    restore_value: no
+  - id: pulses_reverse
+    type: double
+    restore_value: no
+
+sensor:
+  - platform: pulse_counter
+    id: pulse1
+    pin: GPIO14
+    name: "pulse_1"
+    update_interval: .1s
+    unit_of_measurement: "l/min" 
+    filters:
+    - lambda: |-
+        x = x / 300;
+        id(pulses_forward) += x * 0.0835;
+        id(pulses_quantity).publish_state(id(pulses_forward));
+        id(pulses_reverse) = x;
+        return x ;
+  - platform: template
+    id: pulses_quantity
+    name: "Pulses Quantity" 
+    unit_of_measurement: "p"
+    #lambda: return (id(water_amount));
+    
+  - platform: template
+    name: "Apagar Subir"
+    id: apaga_subir
+    # >< 90W-400W for 60s (centrifuge)  010520 changed threshold to 100W
+    lambda: |-  
+      if ( (id(pulses_quantity).state > 300)){
+        
+        return true;
+      } else {
+        // Not running (le due graffe significa che non fa nulla)
+        return {};
+      }
+    
+switch:
+  - platform: gpio
+    pin: GPIO2
+    inverted: yes
+    id: forward
+    restore_mode: ALWAYS_OFF
+    name: forward
+    icon: "mdi:watering-can"
+    on_turn_on:
+      - lambda: |-
+          id(pulses_forward) = 0;
+         
+      - output.set_level:
+          id: sh_speed_pin
+          level: 60%
+      - delay: 2.5s
+      - output.set_level:
+          id: sh_speed_pin
+          level: 25%
+  - platform: gpio
+    pin: GPIO4
+    inverted: yes
+    id: reverse_motor
+    name: reverse motor
+    #    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: |-
+          id(pulses_forward) = 0; 
+      - output.set_level:
+          id: sh_speed_pin
+          level: 60%
+      - delay: 2.5s
+      - output.set_level:
+          id: sh_speed_pin
+          level: 25%
+
+
+output:
+  - platform: esp8266_pwm
+    pin: GPIO5
+    id: sh_speed_pin
+
+
+
+script:
+  # Whenever state_val or request_val are changed, call this to let
+  # the world know (blink the LED, inform Home Assistant, etc)
+  - id: apagar_arriba
+    mode: restart
+    then:
+      - lambda: |-
+          ESP_LOGD("roomtool", "State is: %d, request is %d", id(forward), id(sh_speed_pin));
+      - if:
+          condition:
+            lambda: 'return id(pulse1).state > 300;'
+          then:
+            - switch.turn_off:
+                id: reverse_motor
